@@ -149,7 +149,7 @@ export async function pollPr(
 		const header = `New Codex PR feedback detected on ${pr.owner}/${pr.repo}#${pr.number}.`;
 		const body = newFeedback.map((f) => f.text).join("\n");
 		const instruction =
-			"Review this Codex feedback critically. You MUST fix only clearly broken issues. Some suggestions MAY not fit our repo standards or prior conversation context. For each item you do not fix, you MUST list it and explain why. If a potential fix is a product/behavior decision point, you MUST call that out explicitly in your summary. If all fixes are clear-cut and implemented, you SHOULD post a PR comment summarizing exactly what was fixed and what was not fixed (with reasons), ask @codex to check for any remaining issues, and then await further instructions.";
+			"Review this Codex feedback critically. You MUST act only on concrete, actionable code defects tied to specific files/behavior. If feedback is non-actionable (for example: no-issue praise, generic boilerplate, environment/setup reminders, or any comment without a concrete fix target), you MUST NOT post a PR comment and MUST NOT ping @codex; keep an internal note only and wait. You MUST post a PR comment only when you made code changes in direct response to actionable feedback in this turn, and that comment MUST summarize exactly what was fixed and what was not fixed (with reasons). You MAY ask @codex to re-check only after such code changes; otherwise do nothing and await further instructions.";
 		notifyAgent(pi, runtime, `${header}\n\n${body}\n\n${instruction}`);
 	}
 

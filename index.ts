@@ -1,4 +1,4 @@
-import { isToolCallEventType, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { PR_CREATE_REGEX } from "./src/config";
 import { detectFromCommandResult } from "./src/detection";
 import { discoverCurrentBranchPr, ensureRepoRootAndSlug } from "./src/gh-client";
@@ -6,6 +6,16 @@ import { scheduleMonitor, stopMonitor, upsertAndMonitor } from "./src/monitor";
 import { loadState, persistState } from "./src/state-store";
 import type { RuntimeContext } from "./src/types";
 import { contentToText, nowIso } from "./src/utils";
+
+function isBashToolCall(event: unknown): event is { toolCallId: string; input: { command: string } } {
+	if (!event || typeof event !== "object") return false;
+	const maybe = event as { toolName?: unknown; toolCallId?: unknown; input?: unknown };
+	if (maybe.toolName !== "bash") return false;
+	if (typeof maybe.toolCallId !== "string") return false;
+	if (!maybe.input || typeof maybe.input !== "object") return false;
+	const input = maybe.input as { command?: unknown };
+	return typeof input.command === "string";
+}
 
 export default function (pi: ExtensionAPI) {
 	const runtime: RuntimeContext = {
@@ -50,7 +60,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("tool_call", async (event) => {
-		if (!isToolCallEventType("bash", event)) return;
+		if (!isBashToolCall(event)) return;
 		if (PR_CREATE_REGEX.test(event.input.command)) {
 			runtime.pendingCreateToolCalls.add(event.toolCallId);
 		}
