@@ -1,0 +1,22 @@
+{
+  "name": "pi-codex-pr-review-monitor",
+  "version": "0.1.0",
+  "description": "Always-on Pi extension that monitors Codex PR review comments and injects actionable feedback.",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "github",
+    "codex",
+    "pr-review"
+  ],
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  }
+}

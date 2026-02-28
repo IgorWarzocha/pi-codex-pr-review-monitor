@@ -10,6 +10,24 @@ Always-on project-local Pi extension that:
 - Waits 3 minutes after PR detection, then polls every 60 seconds.
 - Injects new Codex feedback into the main agent as inline user messages.
 
+## Installation
+
+Install globally as a Pi package:
+
+```bash
+pi install git:github.com/IgorWarzocha/pi-codex-pr-review-monitor
+```
+
+Or install project-local:
+
+```bash
+pi install -l git:github.com/IgorWarzocha/pi-codex-pr-review-monitor
+```
+
+## Scope and state location
+
+This extension is safe to install globally because it resolves each active repo root at runtime and writes state into that repo.
+
 ## State file
 
 State is persisted to:
