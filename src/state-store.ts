@@ -45,6 +45,16 @@ export async function loadState(runtime: RuntimeContext): Promise<void> {
 		const parsed = JSON.parse(raw);
 		if (parsed && parsed.version === 1 && parsed.prs) {
 			runtime.state = parsed;
+			for (const pr of Object.values(runtime.state.prs)) {
+				const seedCreatedTs = pr.createdAt ?? pr.updatedAt ?? nowIso();
+				const seedConversationTs = pr.lastPollAt ?? pr.updatedAt ?? pr.createdAt ?? nowIso();
+				pr.cursor = pr.cursor ?? { reviewComments: { ts: seedCreatedTs, id: 0 } };
+				pr.cursor.reviewComments = pr.cursor.reviewComments ?? { ts: seedCreatedTs, id: 0 };
+				pr.cursor.conversationComments = pr.cursor.conversationComments ?? { ts: seedConversationTs, id: 0 };
+				pr.stats = pr.stats ?? { notificationsSent: 0, reviewCommentsSeen: 0 };
+				pr.stats.notificationsSent = pr.stats.notificationsSent ?? 0;
+				pr.stats.reviewCommentsSeen = pr.stats.reviewCommentsSeen ?? 0;
+			}
 		}
 	} catch {
 		// first run or invalid JSON -> start fresh
