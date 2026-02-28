@@ -3,10 +3,8 @@
 Always-on project-local Pi extension that:
 
 - Detects `gh pr create` usage from Pi (agent `bash` tool + `!gh ...` user bash).
-- Monitors Codex comments on the PR via:
-  - `pulls/{pr}/comments` (inline review comments)
-  - `issues/{pr}/comments` (PR conversation thread comments)
-- Does **not** consume review-summary bodies from `pulls/{pr}/reviews`.
+- Monitors only **PR inline review comments** (no issue comments, no review-summary bodies):
+  - `pulls/{pr}/comments`
 - Filters to **Codex-only** authors with an exact allow-list:
   - `chatgpt-codex-connector[bot]`
 - Waits 3 minutes after PR detection, then polls every 60 seconds.
@@ -40,7 +38,7 @@ Tracked data is compact metadata only (no full historical comment archive), incl
 
 - PR status (`open` / `closed` / `merged`)
 - monitor status
-- cursors (`timestamp + id`) for deduplication (so already-seen comments are not re-injected)
+- cursor (`timestamp + id`) for deduplication (so already-seen comments are not re-injected)
 - counters (notifications sent / comments seen)
 
 To prevent unbounded growth, state keeps:

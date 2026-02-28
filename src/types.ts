@@ -19,7 +19,6 @@ export interface PullRequestState {
 	lastError?: string;
 	cursor: {
 		reviewComments: Cursor;
-		conversationComments?: Cursor;
 	};
 	stats: {
 		notificationsSent: number;
@@ -49,14 +48,6 @@ export interface ReviewComment {
 	body?: string;
 	path?: string;
 	line?: number;
-	created_at?: string;
-	user?: { login?: string };
-	html_url?: string;
-}
-
-export interface ConversationComment {
-	id: number;
-	body?: string;
 	created_at?: string;
 	user?: { login?: string };
 	html_url?: string;

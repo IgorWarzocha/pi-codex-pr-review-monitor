@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { POLL_INTERVAL_MS, START_DELAY_MS } from "./config";
 import { ghJson } from "./gh-client";
-import type { ConversationComment, PullRequestRef, ReviewComment, RuntimeContext } from "./types";
+import type { PullRequestRef, ReviewComment, RuntimeContext } from "./types";
 import {
 	asNumber,
 	bumpCursor,
@@ -58,19 +58,13 @@ export async function pollPr(
 		return;
 	}
 
-	const [reviewComments, conversationComments] = await Promise.all([
-		ghJson<ReviewComment[]>(pi, [
-			"api",
-			`/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}/comments?per_page=100`,
-		]),
-		ghJson<ConversationComment[]>(pi, [
-			"api",
-			`/repos/${pr.owner}/${pr.repo}/issues/${pr.number}/comments?per_page=100`,
-		]),
+	const reviewComments = await ghJson<ReviewComment[]>(pi, [
+		"api",
+		`/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}/comments?per_page=100`,
 	]);
 
-	if (!reviewComments || !conversationComments) {
-		pr.lastError = "Failed to fetch PR Codex comments";
+	if (!reviewComments) {
+		pr.lastError = "Failed to fetch PR review comments";
 		pr.lastPollAt = nowIso();
 		pr.updatedAt = pr.lastPollAt;
 		await persistState();
@@ -79,41 +73,24 @@ export async function pollPr(
 
 	const newFeedback: Array<{ when: string; text: string; id: number }> = [];
 
-	let reviewCommentCursor = pr.cursor.reviewComments;
+	let commentCursor = pr.cursor.reviewComments;
 	for (const c of reviewComments) {
 		if (!shouldIncludeCodex(c.user?.login)) continue;
 		const ts = c.created_at;
 		const id = asNumber(c.id);
 		if (!ts || !id) continue;
-		if (isNewer(ts, id, reviewCommentCursor)) {
+		if (isNewer(ts, id, commentCursor)) {
 			const location = c.path ? ` (${c.path}${c.line ? `:${c.line}` : ""})` : "";
 			newFeedback.push({
 				when: ts,
 				id,
-				text: `- [inline review comment${location}] ${truncateBody(c.body)}`,
+				text: `- [review comment${location}] ${truncateBody(c.body)}`,
 			});
 		}
-		reviewCommentCursor = bumpCursor(reviewCommentCursor, ts, id);
+		commentCursor = bumpCursor(commentCursor, ts, id);
 	}
 
-	let conversationCommentCursor = pr.cursor.conversationComments ?? {};
-	for (const c of conversationComments) {
-		if (!shouldIncludeCodex(c.user?.login)) continue;
-		const ts = c.created_at;
-		const id = asNumber(c.id);
-		if (!ts || !id) continue;
-		if (isNewer(ts, id, conversationCommentCursor)) {
-			newFeedback.push({
-				when: ts,
-				id,
-				text: `- [pr conversation comment] ${truncateBody(c.body)}`,
-			});
-		}
-		conversationCommentCursor = bumpCursor(conversationCommentCursor, ts, id);
-	}
-
-	pr.cursor.reviewComments = reviewCommentCursor;
-	pr.cursor.conversationComments = conversationCommentCursor;
+	pr.cursor.reviewComments = commentCursor;
 	pr.lastPollAt = nowIso();
 	pr.updatedAt = pr.lastPollAt;
 	pr.lastError = undefined;
@@ -179,9 +156,8 @@ export async function upsertAndMonitor(
 		monitorStartedAt: existing?.monitorStartedAt,
 		lastPollAt: existing?.lastPollAt,
 		lastError: undefined,
-		cursor: {
-			reviewComments: existing?.cursor?.reviewComments ?? (createdAt ? { ts: createdAt, id: 0 } : {}),
-			conversationComments: existing?.cursor?.conversationComments ?? (createdAt ? { ts: createdAt, id: 0 } : {}),
+		cursor: existing?.cursor ?? {
+			reviewComments: createdAt ? { ts: createdAt, id: 0 } : {},
 		},
 		stats: existing?.stats ?? {
 			notificationsSent: 0,
