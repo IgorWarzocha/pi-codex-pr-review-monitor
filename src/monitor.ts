@@ -1,0 +1,177 @@
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { POLL_INTERVAL_MS, START_DELAY_MS } from "./config";
+import { ghJson } from "./gh-client";
+import type { PullRequestRef, ReviewComment, RuntimeContext } from "./types";
+import {
+	asNumber,
+	bumpCursor,
+	isNewer,
+	normalizePrState,
+	nowIso,
+	shouldIncludeCodex,
+	toPrKey,
+	truncateBody,
+} from "./utils";
+
+export function stopMonitor(runtime: RuntimeContext, key: string): void {
+	const handle = runtime.monitors.get(key);
+	if (handle?.startupTimer) clearTimeout(handle.startupTimer);
+	if (handle?.pollTimer) clearInterval(handle.pollTimer);
+	runtime.monitors.delete(key);
+}
+
+function notifyAgent(pi: ExtensionAPI, runtime: RuntimeContext, text: string): void {
+	if (runtime.agentBusy) {
+		pi.sendUserMessage(text, { deliverAs: "followUp" });
+	} else {
+		pi.sendUserMessage(text);
+	}
+}
+
+export async function pollPr(
+	pi: ExtensionAPI,
+	runtime: RuntimeContext,
+	persistState: () => Promise<void>,
+	key: string,
+): Promise<void> {
+	const pr = runtime.state.prs[key];
+	if (!pr || !pr.monitorActive) return;
+
+	const prInfo = await ghJson<{
+		state: string;
+		merged_at?: string | null;
+	}>(pi, ["api", `/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}`]);
+
+	if (!prInfo) {
+		pr.lastError = "Failed to fetch PR status via gh api";
+		pr.updatedAt = nowIso();
+		await persistState();
+		return;
+	}
+
+	pr.state = normalizePrState(prInfo.state, prInfo.merged_at);
+	if (pr.state !== "open") {
+		pr.monitorActive = false;
+		pr.updatedAt = nowIso();
+		stopMonitor(runtime, key);
+		await persistState();
+		return;
+	}
+
+	const reviewComments = await ghJson<ReviewComment[]>(pi, [
+		"api",
+		`/repos/${pr.owner}/${pr.repo}/pulls/${pr.number}/comments?per_page=100`,
+	]);
+
+	if (!reviewComments) {
+		pr.lastError = "Failed to fetch PR review comments";
+		pr.lastPollAt = nowIso();
+		pr.updatedAt = pr.lastPollAt;
+		await persistState();
+		return;
+	}
+
+	const newFeedback: Array<{ when: string; text: string; id: number }> = [];
+
+	let commentCursor = pr.cursor.reviewComments;
+	for (const c of reviewComments) {
+		if (!shouldIncludeCodex(c.user?.login)) continue;
+		const ts = c.created_at;
+		const id = asNumber(c.id);
+		if (!ts || !id) continue;
+		if (isNewer(ts, id, commentCursor)) {
+			const location = c.path ? ` (${c.path}${c.line ? `:${c.line}` : ""})` : "";
+			newFeedback.push({
+				when: ts,
+				id,
+				text: `- [review comment${location}] ${truncateBody(c.body)}`,
+			});
+		}
+		commentCursor = bumpCursor(commentCursor, ts, id);
+	}
+
+	pr.cursor.reviewComments = commentCursor;
+	pr.lastPollAt = nowIso();
+	pr.updatedAt = pr.lastPollAt;
+	pr.lastError = undefined;
+
+	if (newFeedback.length > 0) {
+		newFeedback.sort((a, b) => a.when.localeCompare(b.when));
+		pr.stats.notificationsSent += 1;
+		pr.stats.reviewCommentsSeen += newFeedback.length;
+
+		const header = `New Codex PR feedback detected on ${pr.owner}/${pr.repo}#${pr.number}.`;
+		const body = newFeedback.map((f) => f.text).join("\n");
+		const instruction =
+			"Review this Codex feedback critically. You MUST fix only clearly broken issues. Some suggestions MAY not fit our repo standards or prior conversation context. For each item you do not fix, you MUST list it and explain why. If a potential fix is a product/behavior decision point, you MUST call that out explicitly in your summary. If all fixes are clear-cut and implemented, you SHOULD post a PR comment summarizing exactly what was fixed and what was not fixed (with reasons), ask @codex to check for any remaining issues, and then await further instructions.";
+		notifyAgent(pi, runtime, `${header}\n\n${body}\n\n${instruction}`);
+	}
+
+	await persistState();
+}
+
+export function scheduleMonitor(
+	pi: ExtensionAPI,
+	runtime: RuntimeContext,
+	persistState: () => Promise<void>,
+	key: string,
+	delayMs: number,
+): void {
+	stopMonitor(runtime, key);
+	const pr = runtime.state.prs[key];
+	if (!pr || !pr.monitorActive) return;
+
+	const handle = {} as { startupTimer?: ReturnType<typeof setTimeout>; pollTimer?: ReturnType<typeof setInterval> };
+	handle.startupTimer = setTimeout(() => {
+		void pollPr(pi, runtime, persistState, key);
+		handle.pollTimer = setInterval(() => {
+			void pollPr(pi, runtime, persistState, key);
+		}, POLL_INTERVAL_MS);
+	}, Math.max(0, delayMs));
+	runtime.monitors.set(key, handle);
+}
+
+export async function upsertAndMonitor(
+	pi: ExtensionAPI,
+	runtime: RuntimeContext,
+	persistState: () => Promise<void>,
+	prRef: PullRequestRef,
+	withDelay = true,
+): Promise<void> {
+	const key = toPrKey(prRef.owner, prRef.repo, prRef.number);
+	const existing = runtime.state.prs[key];
+	const createdAt = prRef.createdAt ?? existing?.createdAt;
+
+	runtime.state.prs[key] = {
+		key,
+		owner: prRef.owner,
+		repo: prRef.repo,
+		number: prRef.number,
+		url: prRef.url,
+		createdAt,
+		state: normalizePrState(prRef.state),
+		detectedAt: existing?.detectedAt ?? nowIso(),
+		updatedAt: nowIso(),
+		monitorActive: normalizePrState(prRef.state) === "open",
+		monitorStartedAt: existing?.monitorStartedAt,
+		lastPollAt: existing?.lastPollAt,
+		lastError: undefined,
+		cursor: existing?.cursor ?? {
+			reviewComments: createdAt ? { ts: createdAt, id: 0 } : {},
+		},
+		stats: existing?.stats ?? {
+			notificationsSent: 0,
+			reviewCommentsSeen: 0,
+		},
+	};
+
+	const prState = runtime.state.prs[key];
+	if (prState.monitorActive) {
+		if (!prState.monitorStartedAt) prState.monitorStartedAt = nowIso();
+		scheduleMonitor(pi, runtime, persistState, key, withDelay ? START_DELAY_MS : 0);
+	} else {
+		stopMonitor(runtime, key);
+	}
+
+	await persistState();
+}
